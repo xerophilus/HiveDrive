@@ -27,10 +27,10 @@ export default function Simulator() {
     setSelectedCarId,
     setCars,
     setMsgRates,
+    setSimStats,
     setExitToast,
   } = useUIStore();
 
-  // Keep mutable refs in sync with store without re-running effects
   const playingRef = useRef(playing);
   const speedRef = useRef(speedMultiplier);
   useEffect(() => { playingRef.current = playing; }, [playing]);
@@ -70,8 +70,9 @@ export default function Simulator() {
       setCars(snap);
       const s = world.stats();
       setMsgRates(s.msgsSentPerSec, s.msgsReceivedPerSec);
+      setSimStats(s.activeMerges, s.activeLaneChanges);
     }
-  }, [setCars, setMsgRates]);
+  }, [setCars, setMsgRates, setSimStats]);
 
   // Resize handler
   useEffect(() => {
@@ -134,8 +135,11 @@ export default function Simulator() {
     const snap = worldRef.current?.snapshot() ?? [];
     setCars(snap);
     const s = worldRef.current?.stats();
-    if (s) setMsgRates(s.msgsSentPerSec, s.msgsReceivedPerSec);
-  }, [setCars, setMsgRates]);
+    if (s) {
+      setMsgRates(s.msgsSentPerSec, s.msgsReceivedPerSec);
+      setSimStats(s.activeMerges, s.activeLaneChanges);
+    }
+  }, [setCars, setMsgRates, setSimStats]);
 
   const handleSpawnOnRamp = useCallback(() => {
     worldRef.current?.spawnOnRamp();
@@ -144,9 +148,8 @@ export default function Simulator() {
   const handleMarkExit = useCallback(() => {
     const result = worldRef.current?.markRandomExit();
     if (result === null || result === undefined) {
-      // Clear any existing timer, show toast
       if (exitToastTimerRef.current) clearTimeout(exitToastTimerRef.current);
-      setExitToast("No lane-2 cars available");
+      setExitToast("No cruising highway cars available");
       exitToastTimerRef.current = setTimeout(() => setExitToast(null), EXIT_TOAST_MS);
     }
   }, [setExitToast]);
