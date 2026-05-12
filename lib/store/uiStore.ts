@@ -11,7 +11,11 @@ interface UIState {
   msgsSentPerSec: number;
   msgsReceivedPerSec: number;
 
-  // v1: transient toast for "no lane-2 cars available"
+  // v2: global sim stats
+  activeMerges: number;
+  activeLaneChanges: number;
+
+  // transient toast
   exitToast: string | null;
 
   setPlaying: (v: boolean) => void;
@@ -19,6 +23,7 @@ interface UIState {
   setSelectedCarId: (id: string | null) => void;
   setCars: (cars: CarState[]) => void;
   setMsgRates: (sent: number, received: number) => void;
+  setSimStats: (activeMerges: number, activeLaneChanges: number) => void;
   setExitToast: (msg: string | null) => void;
 }
 
@@ -29,6 +34,8 @@ export const useUIStore = create<UIState>((set) => ({
   cars: [],
   msgsSentPerSec: 0,
   msgsReceivedPerSec: 0,
+  activeMerges: 0,
+  activeLaneChanges: 0,
   exitToast: null,
 
   setPlaying: (v) => set({ playing: v }),
@@ -36,5 +43,6 @@ export const useUIStore = create<UIState>((set) => ({
   setSelectedCarId: (id) => set({ selectedCarId: id }),
   setCars: (cars) => set({ cars }),
   setMsgRates: (sent, received) => set({ msgsSentPerSec: sent, msgsReceivedPerSec: received }),
+  setSimStats: (activeMerges, activeLaneChanges) => set({ activeMerges, activeLaneChanges }),
   setExitToast: (msg) => set({ exitToast: msg }),
 }));

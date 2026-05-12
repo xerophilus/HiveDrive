@@ -18,13 +18,11 @@ export interface CarState {
   knownPeerIds: string[];
   /** distance in metres to the nearest car ahead in the same lane, null if none within 60 m */
   gapAhead: number | null;
-}
-
-export interface V2VMessage {
-  fromCarId: string;
-  timestamp: number;
-  type: "state" | "intent" | "hazard";
-  payload: unknown;
+  // v2 additions
+  desiredHeadway: number;
+  gapCreatingFor: string | null;
+  laneChangeTarget: number | null;
+  laneChangeProgress: number;
 }
 
 export interface StateMessagePayload {
@@ -37,6 +35,23 @@ export interface StateMessagePayload {
   lane: LaneId;
   intent: Intent;
 }
+
+export interface MergeIntentPayload {
+  targetLane: number;
+  projectedMergeX: number;
+  projectedMergeTime: number; // sim time in seconds
+  currentSpeed: number;
+}
+
+export interface GapCreatingPayload {
+  forCarId: string;
+  expectedGapX: number;
+}
+
+export type V2VMessage =
+  | { fromCarId: string; timestamp: number; type: "state"; payload: StateMessagePayload }
+  | { fromCarId: string; timestamp: number; type: "merge-intent"; payload: MergeIntentPayload }
+  | { fromCarId: string; timestamp: number; type: "gap-creating"; payload: GapCreatingPayload };
 
 export interface KnownPeer {
   lastMessage: StateMessagePayload;

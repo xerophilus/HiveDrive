@@ -1,7 +1,17 @@
 import { Car, makeCarId, resetIdCounter } from "./car";
 import { MessageBus } from "./messageBus";
-import type { CarState, StateMessagePayload } from "./types";
-import { ONRAMP_START_X, ONRAMP_START_Y } from "./road";
+import type { CarState } from "./types";
+import {
+  laneCenter,
+  ONRAMP_START_X,
+  ONRAMP_START_Y,
+  OFFRAMP_START_X,
+} from "./road";
+import {
+  EXIT_PLAN_DISTANCE,
+  LANE_CHANGE_DURATION,
+} from "./tuning";
+import { planLaneChange } from "./decisions/planLaneChange";
 
 const DEFAULT_CAR_COUNT = 8;
 const TICK_HZ = 60;
@@ -12,6 +22,8 @@ export interface WorldStats {
   msgsSentPerSec: number;
   msgsReceivedPerSec: number;
   carCount: number;
+  activeMerges: number;
+  activeLaneChanges: number;
 }
 
 export class World {
@@ -57,9 +69,7 @@ export class World {
       () => ({ x: car.x, y: car.y }),
       () => car.radioRange,
       (msg) => {
-        if (msg.type === "state") {
-          car.receiveV2VMessage(msg.payload as StateMessagePayload, this.simTime);
-        }
+        car.receiveV2VMessage(msg, this.simTime, this.bus);
         this.msgsReceivedAccum++;
       },
     );
@@ -88,13 +98,12 @@ export class World {
   }
 
   /**
-   * Marks a random lane-2 cruising car as exiting.
-   * Returns the car, or null if no eligible car exists.
-   * v1: only lane-2 cars can exit; lane changes to reach lane 2 are TODO: v2 — lane change
+   * v2: any cruising highway car can be marked for exit, not just lane-2 cars.
+   * Cars not in lane 2 will navigate there via cooperative lane changes.
    */
   markRandomExit(): Car | null {
     const candidates = this.cars.filter(
-      (c) => c.lane === 2 && c.intent === "cruise",
+      (c) => typeof c.lane === "number" && c.intent === "cruise",
     );
     if (candidates.length === 0) return null;
     const car = candidates[Math.floor(Math.random() * candidates.length)];
@@ -106,10 +115,43 @@ export class World {
     this.simTime += TICK_DT;
     this.tickCount++;
 
-    // --- ACC: compute and apply acceleration for every car ---
+    // --- ACC: compute acceleration for every car ---
+    const accels = this.cars.map((car) => car.acc(this.cars));
+
+    // --- Update positions ---
+    for (let i = 0; i < this.cars.length; i++) {
+      this.cars[i].update(TICK_DT, accels[i], this.simTime);
+    }
+
+    // --- v2: plan lane changes for exiting cars not yet in lane 2 ---
     for (const car of this.cars) {
-      const accel = car.acc(this.cars);
-      car.update(TICK_DT, accel);
+      if (
+        car.intent === "exiting" &&
+        typeof car.lane === "number" &&
+        car.lane < 2 &&
+        car.laneChangeTarget === null
+      ) {
+        const distToExit = OFFRAMP_START_X - car.x;
+
+        if (distToExit > 0 && distToExit <= EXIT_PLAN_DISTANCE) {
+          const targetLane = (car.lane + 1) as 0 | 1 | 2;
+          if (planLaneChange(car, targetLane, this.cars)) {
+            car.startLaneChange(
+              targetLane,
+              car.y,
+              laneCenter(targetLane),
+              LANE_CHANGE_DURATION,
+            );
+          }
+          // else: no safe gap yet — defer to next tick
+        } else if (distToExit <= 0) {
+          // Missed the exit without reaching lane 2
+          console.warn(
+            `Car ${car.id}: reached exit at lane ${car.lane} without getting to lane 2, reverting to cruise`,
+          );
+          car.intent = "cruise";
+        }
+      }
     }
 
     // --- Remove cars that finished the exit ramp ---
@@ -118,12 +160,18 @@ export class World {
       this.removeCar(car);
     }
 
-    // --- V2V: publish state from every car at 10 Hz ---
+    // --- V2V: publish state + merge-intent at 10 Hz ---
     if (this.tickCount % V2V_PUBLISH_EVERY === 0) {
       for (const car of this.cars) {
         car.publishState(this.bus, this.simTime);
         this.msgsSentAccum++;
-        // msgsReceivedAccum is counted inside the subscriber handler in addCar()
+      }
+      // Merge-intent from on-ramp cars in the merge zone
+      for (const car of this.cars) {
+        if (car.lane === "onramp" && car.intent === "merging") {
+          car.publishMergeIntent(this.bus, this.simTime);
+          this.msgsSentAccum++;
+        }
       }
     }
 
@@ -141,7 +189,6 @@ export class World {
     const elapsed = this.simTime - this.lastRateSampleTime;
     if (elapsed >= 1.0) {
       this.msgsSentPerSec = Math.round(this.msgsSentAccum / elapsed);
-      // msgsReceived is counted by the handler — don't double-count from publish return values
       this.msgsReceivedPerSec = Math.round(this.msgsReceivedAccum / elapsed);
       this.msgsSentAccum = 0;
       this.msgsReceivedAccum = 0;
@@ -150,10 +197,18 @@ export class World {
   }
 
   stats(): WorldStats {
+    const activeMerges = this.cars.filter(
+      (c) => c.lane === "onramp" && c.intent === "merging",
+    ).length;
+    const activeLaneChanges = this.cars.filter(
+      (c) => c.laneChangeTarget !== null,
+    ).length;
     return {
       msgsSentPerSec: this.msgsSentPerSec,
       msgsReceivedPerSec: this.msgsReceivedPerSec,
       carCount: this.cars.length,
+      activeMerges,
+      activeLaneChanges,
     };
   }
 
