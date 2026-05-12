@@ -7,7 +7,8 @@ import { useUIStore } from "@/lib/store/uiStore";
 import Controls from "./Controls";
 import DebugPanel from "./DebugPanel";
 
-const DEBUG_UPDATE_INTERVAL = 1000 / 10; // 10Hz max
+const DEBUG_UPDATE_INTERVAL = 1000 / 10; // 10 Hz max
+const EXIT_TOAST_MS = 3000;
 
 export default function Simulator() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -17,10 +18,19 @@ export default function Simulator() {
   const accumRef = useRef<number>(0);
   const lastDebugUpdateRef = useRef<number>(0);
   const scaleRef = useRef<number>(1);
+  const exitToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { playing, speedMultiplier, selectedCarId, setSelectedCarId, setCars } = useUIStore();
+  const {
+    playing,
+    speedMultiplier,
+    selectedCarId,
+    setSelectedCarId,
+    setCars,
+    setMsgRates,
+    setExitToast,
+  } = useUIStore();
 
-  // Keep refs in sync with store without re-running effects
+  // Keep mutable refs in sync with store without re-running effects
   const playingRef = useRef(playing);
   const speedRef = useRef(speedMultiplier);
   useEffect(() => { playingRef.current = playing; }, [playing]);
@@ -53,12 +63,15 @@ export default function Simulator() {
     const scale = scaleRef.current;
     render(ctx, world.snapshot(), selectedRef.current, scale);
 
-    // Push to Zustand at max 10Hz for debug panel
+    // Push to Zustand at max 10 Hz for debug panel
     if (now - lastDebugUpdateRef.current >= DEBUG_UPDATE_INTERVAL) {
       lastDebugUpdateRef.current = now;
-      setCars(world.snapshot());
+      const snap = world.snapshot();
+      setCars(snap);
+      const s = world.stats();
+      setMsgRates(s.msgsSentPerSec, s.msgsReceivedPerSec);
     }
-  }, [setCars]);
+  }, [setCars, setMsgRates]);
 
   // Resize handler
   useEffect(() => {
@@ -120,15 +133,23 @@ export default function Simulator() {
     worldRef.current?.tick();
     const snap = worldRef.current?.snapshot() ?? [];
     setCars(snap);
-  }, [setCars]);
+    const s = worldRef.current?.stats();
+    if (s) setMsgRates(s.msgsSentPerSec, s.msgsReceivedPerSec);
+  }, [setCars, setMsgRates]);
 
   const handleSpawnOnRamp = useCallback(() => {
     worldRef.current?.spawnOnRamp();
   }, []);
 
   const handleMarkExit = useCallback(() => {
-    worldRef.current?.markRandomExit();
-  }, []);
+    const result = worldRef.current?.markRandomExit();
+    if (result === null || result === undefined) {
+      // Clear any existing timer, show toast
+      if (exitToastTimerRef.current) clearTimeout(exitToastTimerRef.current);
+      setExitToast("No lane-2 cars available");
+      exitToastTimerRef.current = setTimeout(() => setExitToast(null), EXIT_TOAST_MS);
+    }
+  }, [setExitToast]);
 
   return (
     <div className="flex flex-col h-screen bg-gray-950">

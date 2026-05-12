@@ -22,8 +22,9 @@ export class MessageBus {
     return () => this.subscribers.delete(carId);
   }
 
-  publish(msg: V2VMessage, fromPos: { x: number; y: number }): void {
-    // TODO: v1 — wire up publishers/consumers; currently no car sends messages
+  /** Delivers msg to all in-range subscribers. Returns number of deliveries made. */
+  publish(msg: V2VMessage, fromPos: { x: number; y: number }): number {
+    let deliveries = 0;
     for (const sub of Array.from(this.subscribers.values())) {
       if (sub.carId === msg.fromCarId) continue;
       const pos = sub.getPos();
@@ -32,11 +33,13 @@ export class MessageBus {
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist <= sub.radioRange()) {
         sub.handler(msg);
+        deliveries++;
       }
     }
+    return deliveries;
   }
 
-  /** Returns ids of cars within `range` meters of `pos` among subscribers */
+  /** Returns ids of cars within `range` metres of `pos` among subscribers */
   peersInRange(excludeId: string, pos: { x: number; y: number }, range: number): string[] {
     const peers: string[] = [];
     for (const sub of Array.from(this.subscribers.values())) {

@@ -9,10 +9,10 @@ interface ControlsProps {
 }
 
 export default function Controls({ onStep, onSpawnOnRamp, onMarkExit }: ControlsProps) {
-  const { playing, speedMultiplier, setPlaying, setSpeedMultiplier } = useUIStore();
+  const { playing, speedMultiplier, exitToast, setPlaying, setSpeedMultiplier } = useUIStore();
 
   return (
-    <div className="flex flex-wrap items-center gap-3 px-4 py-2 bg-gray-900 border-b border-gray-700 text-sm">
+    <div className="flex flex-wrap items-center gap-3 px-4 py-2 bg-gray-900 border-b border-gray-700 text-sm relative">
       <button
         onClick={() => setPlaying(!playing)}
         className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-mono"
@@ -51,12 +51,19 @@ export default function Controls({ onStep, onSpawnOnRamp, onMarkExit }: Controls
         + On-ramp car
       </button>
 
-      <button
-        onClick={onMarkExit}
-        className="px-3 py-1 rounded bg-orange-600 hover:bg-orange-500 text-white font-mono"
-      >
-        Mark random exit
-      </button>
+      <div className="relative">
+        <button
+          onClick={onMarkExit}
+          className="px-3 py-1 rounded bg-orange-600 hover:bg-orange-500 text-white font-mono"
+        >
+          Mark random exit
+        </button>
+        {exitToast && (
+          <div className="absolute right-0 top-9 z-10 px-2 py-1 rounded bg-gray-700 text-gray-300 text-xs font-mono whitespace-nowrap shadow-lg">
+            {exitToast}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
