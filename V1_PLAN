@@ -1,0 +1,108 @@
+# HiveDrive — v1 Plan
+
+## Context
+
+v0 scaffold is complete: 3-lane highway with on/off ramps, 8 cars cruising in a toroidal loop, on-ramp spawn button, exit-mark button, message bus stubbed but unused. Cars currently drive through each other, the exit mark has no effect, and no V2V messages flow.
+
+v1 makes the foundation **reactive without yet being cooperative.** Cars notice each other (basic ACC), actually broadcast their state over V2V (plumbing wired and visible), and marked-exit cars actually leave the road. No merge logic, no info propagation, no behavior that uses V2V data — that’s v2+.
+
+This is the last “wire the plumbing” increment before the interesting coordination work starts.
+
+## Goals for v1
+
+### 1. Basic ACC (Adaptive Cruise Control)
+
+Each car maintains a safe following distance from the car directly ahead in its lane.
+
+- Sensor model: each car detects cars **in the same lane, ahead, within 60m** using *ground-truth world data* (no sensor noise yet, no V2V involvement — V2V is just plumbing in v1)
+- Desired headway: 1.5 seconds (gap distance = `1.5 * currentSpeed`)
+- Control law: simple proportional. If gap < desired, decelerate proportionally to the deficit (cap deceleration at 4 m/s²). If gap >= desired, accelerate back toward `targetSpeed` (cap acceleration at 2 m/s²).
+- No PID, no jerk smoothing, no emergency-brake logic. Dumb and readable.
+- Cars on the on-ramp and exit-ramp curves also run ACC against cars on those curves (not against highway cars yet — ramp/highway interaction is a v2 problem).
+
+**Acceptance:** Cars no longer overlap. They form natural following platoons when speeds differ. Slower cars cause queues behind them. No cars get stuck at 0 m/s permanently.
+
+### 2. V2V message bus actually used
+
+Every car publishes a state message at 10Hz containing: `{ carId, timestamp, x, y, vx, vy, lane, intent }`. Every car subscribes and maintains a `knownPeers: Map<carId, { lastMessage, lastSeenAt }>` of cars within radio range.
+
+- Range filtering already exists from v0 — keep it
+- Stale peer cleanup: drop peers whose `lastSeenAt` is older than 2 seconds
+- **Cars do NOT yet use peer data for any decision.** ACC still reads ground truth. This is intentional — v1 is plumbing, v2 is when V2V data starts mattering.
+- Add a “messages/sec sent” and “messages/sec received” counter to the debug panel (global aggregates are fine)
+- Selected car: render thin lines from it to each of its known peers (translucent, ~30% opacity)
+
+**Acceptance:** Selecting a car shows lines to peers within 80m. Lines update as cars move in/out of range. Counters in the debug panel update live.
+
+### 3. Exit logic
+
+Cars whose `intent === 'exiting'` and who are in the rightmost lane (lane 2) actually take the exit ramp when they reach the exit point.
+
+- For v1, only allow marking exit on cars already in lane 2. The “mark random exit” button should pick from lane-2 cars only. (Lane changes to reach the exit lane are a v2 concern.)
+- When an exiting car’s `x` reaches the exit-ramp branch point, transition its lane field from `2` to `'offramp'` and have it follow the exit curve (mirror of the on-ramp curve)
+- Once a car reaches the end of the exit ramp (off-screen), remove it from the world entirely (do NOT wrap it around like normal toroidal cars)
+- Toroidal wrap should now also be aware: only non-exiting cars wrap
+
+**Acceptance:** Marking a lane-2 car turns it a distinct color, it continues in lane 2 until the exit, then curves off the road and disappears. Total car count drops by 1 when this happens. Spawning a new on-ramp car increases count back.
+
+## Explicit non-goals for v1
+
+Do **not** implement any of these — they belong in v2 or later:
+
+- **Merge protocol.** On-ramp cars still appear in the rightmost lane abruptly. Highway cars do not yet make space for them.
+- **Lane changes** for any reason other than the on-ramp curve (entering lane 2) and the exit-ramp curve (leaving lane 2). No discretionary lane changes, no “move left to let on-ramp car in.”
+- **Using V2V data for ACC or any decision.** Ground truth only in v1.
+- **Hazard / slowdown propagation.** Cars don’t broadcast anything other than basic state.
+- **Mixed participation.** All cars still have radios.
+- **Collision detection or response** beyond what ACC naturally produces. If two cars do collide due to a bug, they should still pass through each other rather than crash the sim.
+- **Bicycle model / steering dynamics.** Cars still snap to lane centerlines.
+- **Variable target speeds** beyond the initial random spread. No “car wants to go faster, gets frustrated, etc.”
+- **Sensor noise, dropped V2V messages, latency.** Perfect world in v1. Realism is v3.
+
+## Architecture changes from v0
+
+Most v0 structure stays. Specific additions:
+
+```
+lib/sim/
+├── world.ts              # Now ticks ACC + V2V publishing each frame
+├── car.ts                # New: .acc(world) returns target acceleration
+│                         # New: .publishState(bus, now) called at 10Hz
+│                         # New: .knownPeers Map field
+├── road.ts               # New: .exitRampCurve(progress) — mirror of on-ramp
+├── messageBus.ts         # Now actually delivering messages (filtering was already there)
+└── types.ts              # Add: StateMessage payload shape; KnownPeer record
+```
+
+**Frequency note:** ACC runs at the 60Hz sim tick. V2V publish runs at 10Hz — implement as an accumulator on each car, or a global publish step every 6 ticks. Either is fine; pick whichever is simpler.
+
+**Removal order for exiting cars:** When a car finishes the exit ramp, splice it out of `world.cars` cleanly. Make sure the message bus unsubscribes its handler (no memory leaks).
+
+## Debug panel additions
+
+- Global: `msgs/sec sent`, `msgs/sec received`, `total cars`
+- Per-car: add `peers` (count) and `gap ahead` (meters to car in front in same lane, or `—` if none)
+
+## Acceptance criteria summary
+
+The scaffold is v1-complete when **all** of these are true:
+
+1. No two cars occupy the same point in space (ACC working)
+1. Faster cars queue up behind slower ones, forming platoons
+1. Selecting a car shows translucent lines to all peers within 80m, updating live
+1. Debug panel shows msgs/sec sent and received, both > 0 when sim is running
+1. Marking a lane-2 car exiting causes it to curve off the exit ramp and disappear from the world (total count drops)
+1. “Mark random exit” only picks from lane-2 cars (or shows a friendly toast if none available)
+1. On-ramp spawning still works; new cars run ACC against cars already on the ramp
+1. Sim runs at stable 60Hz with at least 20 cars without frame drops on a modern laptop
+1. Zero new TypeScript errors, zero new console warnings vs. v0
+1. README updated with a “What’s working in v1” section
+
+## What v2 will be (do not start yet)
+
+For your reference only, so you can leave appropriate TODO hooks:
+
+- **On-ramp merge protocol.** On-ramp car broadcasts merge intent. Highway cars in lane 2 within some lookahead window decide who creates the gap (the one immediately behind the merge point). That car increases its desired headway temporarily. Once gap is large enough, on-ramp car transitions onto highway smoothly instead of snapping.
+- **Discretionary lane changes** so exiting cars can move to lane 2 from lanes 0/1.
+
+When writing v1, where v2 hooks naturally belong, leave `// TODO: v2 — merge protocol` or `// TODO: v2 — lane change` comments. Don’t implement them.
